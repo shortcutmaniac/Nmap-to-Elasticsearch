@@ -44,8 +44,43 @@ for host in root.findall('host'):
             service_name = service_element.attrib.get('product', 'N/A')
             ports.append({"port": port_number, "service_name": service_name})
 
-    # Construct the bulk request
-    bulk_request = construct_bulk_request(hostname, ip_address, ports)
+    # Check if document exists based on hostname
+    query = {
+        "query": {
+            "term": {
+                "hostname.keyword": {
+                    "value": hostname
+                }
+            }
+        }
+    }
+    response = requests.get(f"{elasticsearch_host}/{index_name}/_search", json=query)
+    data = response.json()
+    if "hits" in data and "total" in data["hits"]:
+        document_exists = data["hits"]["total"]["value"] > 0
+    else:
+        document_exists = False
+
+    if document_exists:
+        # Update existing document using Update API
+        doc_id = data["hits"]["hits"][0]["_id"]
+        update_request = {
+            "script": {
+                "source": """
+                    ctx._source.ip_address = params.ip_address;
+                    ctx._source.ports = params.ports;
+                """,
+                "lang": "painless",
+                "params": {
+                    "ip_address": ip_address,
+                    "ports": ports
+                }
+            }
+        }
+        bulk_request = json.dumps({"update": {"_index": index_name, "_id": doc_id}}) + "\n" + json.dumps(update_request)
+    else:
+        # Add new document
+        bulk_request = construct_bulk_request(hostname, ip_address, ports)
 
     # Accumulate bulk request data
     bulk_data += bulk_request + "\n"
